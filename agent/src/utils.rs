@@ -27,8 +27,8 @@ pub fn split_path_inclusive(path: &Path, target: &str) -> Option<(PathBuf, PathB
     }
 
     if found {
-        let second: PathBuf = iter.collect();
-        Some((first, second))
+    let second: PathBuf = iter.collect();
+    Some((first, second))
     } else {
         None
     }
