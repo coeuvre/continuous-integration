@@ -36,10 +36,6 @@ pub struct Command {
 }
 
 impl Command {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn command<T: Into<String>>(&mut self, command: T) -> &mut Self {
         if self.is_empty() {
             self.command = command.into();
@@ -72,7 +68,7 @@ mod tests {
 
     #[test]
     fn to_yaml_single_command() {
-        let mut command = Command::new();
+        let mut command = Command::default();
         command.command("command.sh");
         let mut pipeline = Pipeline::default();
         pipeline.command_step(command);
@@ -87,7 +83,7 @@ steps:
 
     #[test]
     fn from_yaml_single_command() {
-        let mut command = Command::new();
+        let mut command = Command::default();
         command.command("command.sh");
         let mut pipeline = Pipeline::default();
         pipeline.command_step(command);
@@ -102,7 +98,7 @@ steps:
     #[test]
     fn to_yaml_multiple_commands() {
         let mut pipeline = Pipeline::default();
-        let mut step = Command::new();
+        let mut step = Command::default();
         step.command("command1.sh");
         step.command("command2.sh");
         pipeline.steps.push(Step::Command(step));
@@ -119,7 +115,7 @@ steps:
     #[test]
     fn from_yaml_multiple_commands() {
         let mut pipeline = Pipeline::default();
-        let mut step = Command::new();
+        let mut step = Command::default();
         step.command("command1.sh");
         step.command("command2.sh");
         pipeline.steps.push(Step::Command(step));
