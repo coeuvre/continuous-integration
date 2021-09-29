@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::{anyhow, Result};
+
 /// Splits [`Path`] into two parts separated by `target`. The `target` itself is included
 /// in the end of first part.
 ///
@@ -32,4 +34,15 @@ pub fn split_path_inclusive(path: &Path, target: &str) -> Option<(PathBuf, PathB
     } else {
         None
     }
+}
+
+pub fn load_http(url: &str) -> Result<String> {
+    let resp = reqwest::blocking::get(url)?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(anyhow!("{}", status).context(format!("Failed to load url `{}`", url)));
+    }
+
+    Ok(resp.text()?)
 }
