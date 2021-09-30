@@ -36,6 +36,15 @@ pub fn split_path_inclusive(path: &Path, target: &str) -> Option<(PathBuf, PathB
     }
 }
 
+pub fn load_file(path_or_url: &str) -> Result<String> {
+    if path_or_url.starts_with("http") {
+        return load_http(path_or_url);
+    }
+
+    let path = Path::new(path_or_url);
+    Ok(std::fs::read_to_string(path)?)
+}
+
 pub fn load_http(url: &str) -> Result<String> {
     let resp = reqwest::blocking::get(url)?;
 

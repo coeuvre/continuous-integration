@@ -4,11 +4,11 @@ use std::{path::PathBuf, time::Duration};
 use structopt::StructOpt;
 
 use bazelci_agent::artifact::upload;
+use bazelci_agent::pipeline::print as pipeline_print;
 
 arg_enum! {
     #[allow(non_camel_case_types)]
     enum UploadMode {
-        // Upload as Buildkite's artifacts
         buildkite,
     }
 }
@@ -41,9 +41,36 @@ enum ArtifactCommand {
     },
 }
 
+arg_enum! {
+    #[allow(non_camel_case_types)]
+    enum PipelineMode {
+        buildkite,
+    }
+}
+
+/// Manipulate Bazel CI pipelines
+#[derive(StructOpt)]
+enum PipelineCommand {
+    /// Prints pipeline configuration in other format
+    #[structopt(rename_all = "snake")]
+    Print {
+        /// The file in YAML format that contains various configurations about pipeline
+        #[structopt(long, parse(from_os_str))]
+        config: Option<PathBuf>,
+
+        /// The target format
+        #[structopt(long, possible_values = &PipelineMode::variants(), case_insensitive = true)]
+        mode: Option<PipelineMode>,
+
+        /// The pipeline file this command is operating on. Can be file path or HTTP url
+        pipeline: String,
+    }
+}
+
 #[derive(StructOpt)]
 #[structopt(rename_all = "snake")]
 enum Command {
+    Pipeline(PipelineCommand),
     Artifact(ArtifactCommand),
 }
 
@@ -54,6 +81,16 @@ fn main() -> Result<()> {
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
     match cmd {
+        Command::Pipeline(cmd) => match cmd {
+            PipelineCommand::Print {config, mode, pipeline} => {
+                let mode = match mode {
+                    Some(PipelineMode::buildkite) => pipeline_print::Mode::Buildkite,
+                    None => pipeline_print::Mode::Buildkite,
+                };
+                pipeline_print::print(pipeline, config, mode)?;
+            }
+        }
+
         Command::Artifact(cmd) => match cmd {
             ArtifactCommand::Upload {
                 dry,
@@ -76,7 +113,7 @@ fn main() -> Result<()> {
                     monitor_flaky_tests,
                 )?;
             }
-        },
+        }
     }
 
     Ok(())
