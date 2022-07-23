@@ -91,6 +91,19 @@ fn watch_bep_json_file(
                         }
                     }
                     parser.test_summaries.clear();
+
+                    for test_result in &parser.test_results {
+                        if let Some(test_xml) = test_result
+                            .test_action_output
+                            .iter()
+                            .find(|output| output.name == "test.xml")
+                        {
+                            if let Ok(path) = uri_to_file_path(&test_xml.uri) {
+                                uploader.upload_test_xml(dry, &path)?;
+                            }
+                        }
+                    }
+                    parser.test_results.clear();
                 }
 
                 if parser.done {
@@ -183,12 +196,14 @@ fn sha1_digest(path: &Path) -> Sha1Digest {
 
 struct Uploader {
     uploaded_digests: HashSet<Sha1Digest>,
+    uploaded_test_xml: HashSet<String>,
 }
 
 impl Uploader {
     pub fn new() -> Self {
         Self {
             uploaded_digests: HashSet::new(),
+            uploaded_test_xml: HashSet::new(),
         }
     }
 
@@ -230,6 +245,64 @@ impl Uploader {
             &["artifact", "upload", artifact.as_str()],
         )
     }
+
+    fn upload_test_xml(&mut self, dry: bool, test_xml_path: &Path) -> Result<()> {
+        let token = maybe_get_env("BUILDKITE_ANALYTICS_TOKEN");
+        if token.is_none() {
+            return Ok(());
+        }
+        let token = token.unwrap();
+        let path = test_xml_path.to_str();
+        if path.is_none() {
+            return Ok(());
+        }
+        let path_str = path.unwrap();
+
+        if self.uploaded_test_xml.contains(path_str) {
+            return Ok(());
+        }
+
+        let client = reqwest::blocking::Client::new();
+        let mut form = reqwest::blocking::multipart::Form::new()
+            .file("data", test_xml_path)?
+            .text("format", "junit")
+            .text("run_env[CI]", "buildkite");
+
+        for (name, env) in [
+            ("run_env[key]", "BUILDKITE_BUILD_ID"),
+            ("run_env[url]", "BUILDKITE_BUILD_URL"),
+            ("run_env[branch]", "BUILDKITE_BRANCH"),
+            ("run_env[commit_sha]", "BUILDKITE_COMMIT"),
+            ("run_env[number]", "BUILDKITE_BUILD_NUMBER"),
+            ("run_env[job_id]", "BUILDKITE_JOB_ID"),
+            ("run_env[message]", "BUILDKITE_MESSAGE"),
+        ] {
+            if let Some(value) = maybe_get_env(env) {
+                form = form.text(name, value);
+            }
+        }
+
+        let request = client
+            .post("https://analytics-api.buildkite.com/v1/uploads")
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Token token={}", token),
+            )
+            .multipart(form);
+
+        if dry {
+            println!("upload-test-result {}", path_str);
+        } else {
+            request.send()?;
+        }
+
+        self.uploaded_test_xml.insert(path_str.to_string());
+        Ok(())
+    }
+}
+
+fn maybe_get_env(key: &str) -> Option<String> {
+    std::env::var(key).ok()
 }
 
 #[allow(dead_code)]
@@ -317,6 +390,20 @@ struct FailedTest {
     uri: String,
 }
 
+struct Output {
+    name: String,
+    uri: String,
+}
+
+#[allow(dead_code)]
+struct TestResult {
+    label: String,
+    run: i64,
+    shard: i64,
+    attempt: i64,
+    test_action_output: Vec<Output>,
+}
+
 struct BepJsonParser {
     path: PathBuf,
     offset: u64,
@@ -326,6 +413,7 @@ struct BepJsonParser {
 
     local_exec_root: Option<PathBuf>,
     test_summaries: Vec<TestSummary>,
+    test_results: Vec<TestResult>,
 }
 
 impl BepJsonParser {
@@ -339,6 +427,7 @@ impl BepJsonParser {
 
             local_exec_root: None,
             test_summaries: Vec::new(),
+            test_results: Vec::new(),
         }
     }
 
@@ -393,6 +482,8 @@ impl BepJsonParser {
                         self.on_workspace(&build_event);
                     } else if build_event.is_test_summary() {
                         self.on_test_summary(&build_event);
+                    } else if build_event.is_test_result() {
+                        self.on_test_result(&build_event);
                     }
                 }
                 Err(error) => {
@@ -448,6 +539,55 @@ impl BepJsonParser {
         })
     }
 
+    fn on_test_result(&mut self, build_event: &BuildEvent) {
+        let test_result_id = build_event.get("id.testResult").and_then(|v| v.as_object());
+        if test_result_id.is_none() {
+            return;
+        }
+        let test_result_id = test_result_id.unwrap();
+        let label = test_result_id
+            .get("label")
+            .and_then(|label| label.as_str())
+            .unwrap_or("");
+        let run = test_result_id
+            .get("run")
+            .and_then(|run| run.as_i64())
+            .unwrap_or(0);
+        let shard = test_result_id
+            .get("shard")
+            .and_then(|shard| shard.as_i64())
+            .unwrap_or(0);
+        let attempt = test_result_id
+            .get("attempt")
+            .and_then(|attempt| attempt.as_i64())
+            .unwrap_or(0);
+        let test_action_output: Vec<_> = build_event
+            .get("testResult.testActionOutput")
+            .and_then(|a| a.as_array())
+            .unwrap_or(&Vec::new())
+            .iter()
+            .map(|item| Output {
+                name: item
+                    .get("name")
+                    .and_then(|name| name.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                uri: item
+                    .get("uri")
+                    .and_then(|name| name.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            })
+            .collect();
+        self.test_results.push(TestResult {
+            label: label.to_string(),
+            run,
+            shard,
+            attempt,
+            test_action_output,
+        });
+    }
+
     pub fn has_overall_test_status(&self, status: &str) -> bool {
         for test_log in self.test_summaries.iter() {
             if test_log.overall_status == status {
@@ -471,6 +611,10 @@ impl BuildEvent {
         }
 
         Ok(Self { value })
+    }
+
+    pub fn is_test_result(&self) -> bool {
+        self.get("id.testResult").is_some()
     }
 
     pub fn is_test_summary(&self) -> bool {
