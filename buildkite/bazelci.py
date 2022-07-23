@@ -1641,11 +1641,11 @@ def download_bazelci_agent(dest_dir, platform, version):
     elif platform == "macos":
         postfix = "x86_64-apple-darwin"
     else:
-        postfix = "x86_64-unknown-linux-musl"
+        postfix = "x86_64-unknown-linux-gnu"
 
     name = "bazelci-agent-{}-{}".format(version, postfix)
     url = (
-        "https://github.com/bazelbuild/continuous-integration/releases/download/agent-{}/{}".format(
+        "https://github.com/coeuvre/continuous-integration/releases/download/agent-{}/{}".format(
             version, name
         )
     )
@@ -2230,7 +2230,7 @@ def execute_bazel_coverage(
 
 
 def upload_test_logs_from_bep(bep_file, tmpdir, binary_platform, monitor_flaky_tests):
-    bazelci_agent_binary = download_bazelci_agent(tmpdir, binary_platform, "0.1.3")
+    bazelci_agent_binary = download_bazelci_agent(tmpdir, binary_platform, "0.2.0")
     execute_command(
         [
             bazelci_agent_binary,
