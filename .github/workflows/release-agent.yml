@@ -50,18 +50,9 @@ jobs:
           tag_name: ${{ env.AGENT_VERSION }}
           release_name: ${{ env.AGENT_VERSION }}
 
-  install-build-deps:
-    name: install-build-deps
-    runs-on: ubuntu-latest
-    steps:
-      - name: Update apt index
-        run: sudo apt-get update
-      - name: Install musl-tools
-        run: sudo apt-get install musl-tools
-
   build-release:
     name: build-release
-    needs: ['create-release', 'install-build-deps']
+    needs: ['create-release']
     runs-on: ${{ matrix.os }}
     env:
       # Emit backtraces on panics.
@@ -84,6 +75,10 @@ jobs:
           target: x86_64-pc-windows-msvc
 
     steps:
+    - name: Install deps
+      if: matrix.build == 'linux'
+      run: sudo apt-get update && sudo apt-get install musl-tools
+
     - name: Checkout repository
       uses: actions/checkout@v2
       with:
