@@ -290,13 +290,14 @@ impl Uploader {
             )
             .multipart(form);
 
-        if dry {
-            println!("upload-test-result {}", path_str);
-        } else {
+        println!("upload-test-result {}", path_str);
+
+        if !dry {
             request.send()?;
         }
 
         self.uploaded_test_xml.insert(path_str.to_string());
+
         Ok(())
     }
 }
