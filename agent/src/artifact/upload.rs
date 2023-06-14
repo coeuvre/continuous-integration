@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use quick_xml::events::{BytesStart, BytesCData};
+use quick_xml::events::{BytesCData, BytesStart, BytesEnd};
 use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::{
@@ -213,6 +213,18 @@ fn upload_bep_json_file(
     uploader.upload_artifact(dry, None, build_event_json_file, mode)
 }
 
+fn gen_error_content(bazelci_task: &str, label: &str, name: &str, test_log: &str) -> String {
+    let mut buf = String::new();
+    buf.push_str(&format!("BAZELCI_TASK={}\n", bazelci_task));
+    buf.push_str(&format!("TEST_LABEL={}\n", label));
+    buf.push_str(&format!("TEST_NAME={}\n", name));
+    buf.push_str("\n");
+    buf.push_str(&format!("bazel test {} --test_filter={}\n", &label, &name));
+    buf.push_str("\n\n");
+    buf.push_str(test_log);
+    buf
+}
+
 fn parse_test_xml(path: &Path, bazelci_task: &str, label: &str) -> Result<Option<Vec<u8>>> {
     use quick_xml::{events::Event, reader::Reader, writer::Writer};
     use std::io::Cursor;
@@ -230,7 +242,7 @@ fn parse_test_xml(path: &Path, bazelci_task: &str, label: &str) -> Result<Option
             Event::Eof => break,
             Event::Start(tag) => {
                 if in_error_tag {
-                    error_tag_stack+= 1;
+                    error_tag_stack += 1;
                 }
 
                 let tag = match tag.name().as_ref() {
@@ -260,41 +272,52 @@ fn parse_test_xml(path: &Path, bazelci_task: &str, label: &str) -> Result<Option
 
                         new_tag
                     }
+                    b"failure" => {
+                        in_error_tag = true;
+                        // replace failure with error
+                        let mut new_tag = BytesStart::new("error");
+                        new_tag.push_attribute(("message", ""));
+                        new_tag
+                    }
                     b"error" => {
                         in_error_tag = true;
                         tag
-                    },
+                    }
                     _ => tag,
                 };
                 writer.write_event(Event::Start(tag))?;
             }
             Event::CData(mut cdata) => {
                 if in_error_tag {
-                    let original_content = String::from_utf8_lossy(&*cdata);
-                    let mut new_content = String::new();
-                    new_content.push_str(&format!("BAZELCI_TASK={}\n", bazelci_task));
-                    new_content.push_str(&format!("TEST_LABEL={}\n", label));
-                    new_content.push_str(&format!("TEST_NAME={}\n", &name));
-                    new_content.push_str("\n");
-                    new_content.push_str(&format!("bazel test {} --test_filter={}\n", &label, &name));
-                    new_content.push_str("\n\n");
-                    new_content.push_str(&original_content);
+                    let test_log = String::from_utf8_lossy(&*cdata);
+                    let new_content = gen_error_content(bazelci_task, label, &name, &test_log);
                     cdata = BytesCData::new(new_content);
                 }
 
                 writer.write_event(Event::CData(cdata))?;
-            },
-            Event::End(tag) => {
+            }
+            Event::Text(text) => {
+                if in_error_tag {
+                    let test_log = String::from_utf8_lossy(&*text);
+                    let new_content = gen_error_content(bazelci_task, label, &name, &test_log);
+                    let cdata = BytesCData::new(new_content);
+                    writer.write_event(Event::CData(cdata))?;
+                } else {
+                    writer.write_event(Event::Text(text))?;
+                }
+            }
+            Event::End(mut tag) => {
                 if in_error_tag {
                     if error_tag_stack > 0 {
                         error_tag_stack -= 1;
                     } else {
                         in_error_tag = false;
+                        tag = BytesEnd::new("error");
                     }
                 }
 
                 writer.write_event(Event::End(tag))?;
-            },
+            }
             e => writer.write_event(e)?,
         }
     }
@@ -407,15 +430,15 @@ impl Uploader {
         cwd: Option<&Path>,
         token: &str,
         bazelci_task: &str,
-        data: &Path,
+        test_xml: &Path,
         label: &str,
         format: &str,
         forms: &[(impl AsRef<str>, impl AsRef<str>)],
     ) -> Result<()> {
         let full_path = if let Some(cwd) = cwd {
-            cwd.join(data)
+            cwd.join(test_xml)
         } else {
-            data.to_path_buf()
+            test_xml.to_path_buf()
         };
 
         let content = parse_test_xml(&full_path, &bazelci_task, label)?;
@@ -430,6 +453,7 @@ impl Uploader {
         }
 
         println!("Uploading to Test Analytics: data={}", full_path.display());
+        println!("{}", &String::from_utf8_lossy(&content));
 
         let filename = full_path
             .file_name()
@@ -512,7 +536,16 @@ impl Uploader {
             }
         }
 
-        self.upload_test_analytics(dry, cwd, &token, &bazelci_task, test_xml, label, "junit", &forms)
+        self.upload_test_analytics(
+            dry,
+            cwd,
+            &token,
+            &bazelci_task,
+            test_xml,
+            label,
+            "junit",
+            &forms,
+        )
     }
 }
 
